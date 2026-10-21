@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex TokenAPI 多实例控制台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">LOCAL CONTROL PLANE</div>
+        <h1>Codex TokenAPI <span>多实例控制台</span></h1>
+        <p class="subtitle">每个实例使用独立 CODEX_HOME、应用数据目录和 TokenAPI 配置。</p>
+      </div>
+      <div class="top-actions">
+        <button class="button ghost" id="importExisting">导入本机配置</button>
+        <button class="button primary" id="launchAll">同时启动全部</button>
+        <button class="button danger" id="stopAll">停止全部</button>
+      </div>
+    </header>
+
+    <section class="notice">
+      <div class="notice-icon">⌘</div>
+      <div><strong>只监听本机</strong><br><span>Token 会使用当前 Windows 用户 DPAPI 加密保存，不会返回到浏览器。</span></div>
+      <div class="data-root" id="dataRoot"></div>
+    </section>
+
+    <section class="toolbar">
+      <div><span class="section-title">实例配置</span><span class="count" id="profileCount">0 个</span></div>
+      <div class="toolbar-actions">
+        <button class="button ghost" id="toggleAll">全部折叠</button>
+        <button class="button ghost" id="addProfile">＋ 新建实例</button>
+      </div>
+    </section>
+
+    <section class="profiles" id="profiles"></section>
+    <section class="empty" id="emptyState" hidden>
+      <div class="empty-mark">+</div><h2>还没有实例配置</h2>
+      <p>新建一组 TokenAPI 配置后，就可以一次启动多个独立 Codex 客户端。</p>
+      <button class="button primary" id="addProfileEmpty">创建第一个实例</button>
+    </section>
+
+    <footer><span id="toast" role="status"></span><span>Codex Multi Launcher · localhost</span></footer>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
