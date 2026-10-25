@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API 接入平台 · Agent Desk</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/platform.css">
+  <script src="/icons.js" defer></script>
+  <script src="/app.js" defer></script>
+  <script src="/platform-ui.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a href="/" class="brand"><span class="brand-mark"><i data-lucide="workflow"></i></span><span>Agent Desk<small>API 接入平台</small></span></a>
+    <div class="nav-label">工作空间</div>
+    <nav aria-label="主导航">
+      <button class="nav-item active" id="nav-providers"><i data-lucide="network"></i>供应商与密钥<span class="nav-count" id="provider-nav-count">0</span></button>
+      <button class="nav-item" id="nav-tasks"><i data-lucide="list-checks"></i>子任务监控<span class="nav-count" id="nav-count">0</span></button>
+      <button class="nav-item" id="nav-privacy"><i data-lucide="shield-check"></i>隐私与记录</button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="provider"><span class="provider-symbol"><i data-lucide="server"></i></span><span>本地网关<small>多供应商接入</small></span><span class="provider-dot"></span></div>
+      <div class="local-label"><i data-lucide="hard-drive"></i>仅本机访问</div>
+    </div>
+  </aside>
+  <main>
+    <header class="topbar"><div class="breadcrumb">协作空间 <i data-lucide="chevron-right"></i> <span id="breadcrumb-current">供应商与密钥</span></div><span class="connection" id="connection"><span class="dot"></span><span id="connection-text">正在连接</span></span></header>
+    <nav class="mobile-nav" aria-label="页面"><button id="mobile-providers" class="active"><i data-lucide="network"></i>供应商与密钥</button><button id="mobile-tasks"><i data-lucide="list-checks"></i>子任务监控</button></nav>
+    <div class="page" id="providers-page">
+      <section class="page-heading">
+        <div><div class="eyebrow">PROVIDERS &amp; CREDENTIALS</div><h1>API 接入平台</h1><p class="subtitle">供应商 / 模型 / 密钥池</p></div>
+        <div class="heading-actions"><span class="privacy-pill"><i data-lucide="lock-keyhole"></i>Windows 加密存储</span><button class="button primary" id="add-provider"><i data-lucide="plus"></i>添加供应商</button></div>
+      </section>
+      <div class="alert" id="provider-alert" hidden role="alert"></div>
+      <section class="provider-overview">
+        <div><span>已接入供应商</span><strong id="provider-total">0</strong></div>
+        <div><span>已启用密钥</span><strong id="key-total">0</strong></div>
+        <div><span>默认供应商</span><strong id="default-provider-name">—</strong></div>
+        <div class="overview-action"><button class="button" id="new-task"><i data-lucide="send"></i>派发任务</button></div>
+      </section>
+      <section class="provider-workspace">
+        <aside class="provider-directory">
+          <div class="directory-heading"><h2>供应商</h2><button class="icon-button" id="refresh-providers" aria-label="刷新供应商" title="刷新供应商"><i data-lucide="refresh-cw"></i></button></div>
+          <label class="search provider-search"><i data-lucide="search"></i><input id="provider-search" placeholder="搜索供应商" aria-label="搜索供应商"></label>
+          <div id="provider-list"></div>
+        </aside>
+        <div id="provider-detail" class="provider-detail"><div class="empty"><i data-lucide="network"></i><h3>暂无供应商</h3></div></div>
+      </section>
+      <div class="privacy-footer"><i data-lucide="shield-check"></i><span>密钥不回显、不进入监控和导出；不自动重试付费请求</span><button id="provider-privacy-link">记录策略 <i data-lucide="arrow-up-right"></i></button></div>
+    </div>
+    <div class="page" id="tasks-page" hidden>
+      <section class="page-heading">
+        <div><div class="eyebrow">MULTI-PROVIDER TASKS</div><h1>子任务监控</h1><p class="subtitle" id="date-label"></p></div>
+        <div class="heading-actions task-heading-actions"><button class="button" id="logging-settings"><i data-lucide="file-clock"></i>记录设置</button><button class="button" id="export"><i data-lucide="download"></i>导出</button><button class="button primary" id="dispatch-task"><i data-lucide="send"></i>派发任务</button></div>
+      </section>
+      <div class="alert" id="alert" hidden role="status"></div>
+      <section class="metrics" aria-label="任务概览">
+        <div class="metric"><div class="metric-label">任务总数 <i data-lucide="layers"></i></div><strong id="metric-total">0</strong><span>最近 7 天 · 最多 500 条</span></div>
+        <div class="metric"><div class="metric-label">进行中 <span class="mini-dot teal"></span></div><strong id="metric-running">0</strong><span id="running-note">暂无进行中的任务</span></div>
+        <div class="metric"><div class="metric-label">已完成 <i data-lucide="circle-check"></i></div><strong id="metric-complete">0</strong><span id="complete-note">暂无完成记录</span></div>
+        <div class="metric"><div class="metric-label">Token 用量 <i data-lucide="chart-no-axes-column"></i></div><strong id="metric-tokens">0</strong><span id="token-note">已返回的用量合计</span></div>
+      </section>
+      <section class="activity-band">
+        <div class="activity-title"><i data-lucide="activity"></i><div><strong>派发活动</strong><span>过去 60 分钟</span></div></div>
+        <div class="activity-chart"><canvas id="activity" aria-label="过去一小时每五分钟的任务派发数量" role="img"></canvas><div class="chart-labels"><span>60 分钟前</span><span>现在</span></div></div>
+        <div class="activity-number"><strong id="recent-count">0</strong><span>次派发</span></div>
+      </section>
+      <section class="tasks-section">
+        <div class="section-heading"><h2>任务队列 <span id="queue-count">0</span></h2><div class="refresh-controls"><label class="switch-label"><input id="auto-refresh" type="checkbox" checked><span class="switch" aria-hidden="true"></span>实时更新</label><button class="icon-button" id="refresh" title="刷新任务" aria-label="刷新任务"><i data-lucide="refresh-cw"></i></button></div></div>
+        <div class="toolbar">
+          <div class="tabs" role="tablist" aria-label="任务状态">
+            <button class="tab active" role="tab" aria-selected="true" data-filter="all">全部任务 <span id="tab-all">0</span></button>
+            <button class="tab" role="tab" aria-selected="false" data-filter="running">进行中 <span id="tab-running">0</span></button>
+            <button class="tab" role="tab" aria-selected="false" data-filter="attention">需关注 <span id="tab-attention">0</span></button>
+          </div>
+          <div class="filters"><label class="search"><i data-lucide="search"></i><input id="search" type="search" placeholder="搜索任务 ID" aria-label="搜索任务 ID"></label><select id="provider-filter" aria-label="筛选供应商"><option value="all">全部供应商</option></select><select id="role" aria-label="筛选角色"><option value="all">全部角色</option><option value="analyst">分析</option><option value="reviewer">审查</option><option value="planner">规划</option></select><select id="sort" aria-label="排序"><option value="newest">最新派发</option><option value="duration">耗时最长</option><option value="tokens">用量最多</option></select></div>
+        </div>
+        <div class="table-wrap">
+          <table><thead><tr><th>任务 / 执行者</th><th>状态</th><th class="time-column">派发时间</th><th>耗时</th><th>Tokens</th><th class="protection-column">脱敏</th><th class="arrow-column"><span class="sr-only">详情</span></th></tr></thead><tbody id="jobs"></tbody></table>
+          <div class="empty" id="empty"><span class="empty-icon"><i data-lucide="inbox"></i></span><h3 id="empty-title">暂无子任务</h3><p id="empty-text">等待下一次派发</p></div>
+        </div>
+        <footer class="table-footer"><span id="visible-count">0 条记录</span><span id="updated-at">等待同步</span></footer>
+      </section>
+      <div class="privacy-footer"><i data-lucide="lock-keyhole"></i><span>默认仅记元数据；正文记录需单独开启，脱敏后加密保存</span><button id="privacy-link">记录策略 <i data-lucide="arrow-up-right"></i></button></div>
+    </div>
+  </main>
+  <dialog id="detail" aria-labelledby="detail-title">
+    <div class="dialog-heading"><div><div class="eyebrow">TASK DETAILS</div><h2 id="detail-title">任务详情</h2></div><button class="icon-button" id="close-detail" title="关闭详情" aria-label="关闭详情"><i data-lucide="x"></i></button></div>
+    <div id="detail-content"></div>
+  </dialog>
+  <dialog id="privacy" aria-labelledby="privacy-title">
+    <div class="dialog-heading"><div><div class="eyebrow">LOCAL PRIVACY</div><h2 id="privacy-title">隐私与记录</h2></div><button class="icon-button" id="close-privacy" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></div>
+    <div class="policy-list">
+      <div><i data-lucide="list-filter"></i><section><h3>仅保存元数据</h3><p>任务 ID、角色、模型、状态、时间、字符数、token 用量、脱敏计数和固定错误分类。导出使用相同字段。</p></section></div>
+      <div><i data-lucide="shield-check"></i><section><h3>正文记录默认关闭</h3><p>默认只保留元数据。单独开启正文记录后，新请求和回复先脱敏，再用 Windows 账户加密保存；输入与输出各最多 64,000 字符。历史请求不会补录。</p></section></div>
+      <div><i data-lucide="scan-line"></i><section><h3>发送前过滤</h3><p>过滤平台保存的 API 密钥及常见凭据、邮箱、电话、URL 和本地路径。规则无法识别全部个人信息和业务机密，派发时仍需最小化上下文。</p></section></div>
+      <div><i data-lucide="clock-3"></i><section><h3>7 天保留期</h3><p>最多保留 500 条任务记录，服务运行时定期清理。心跳超过 20 秒未更新的任务显示为连接中断，远端可能仍在处理。</p></section></div>
+      <div><i data-lucide="rotate-ccw"></i><section><h3>手动恢复</h3><p>重试会创建新请求，关联原记录且可能再次计费。服务重启只标记中断，不会自动重发；没有完整请求内容时无法恢复。</p></section></div>
+      <div><i data-lucide="hard-drive"></i><section><h3>本机访问</h3><p>服务只监听 127.0.0.1，拒绝跨站请求。当前 Windows 账户下的其他程序仍可能访问本地文件。</p></section></div>
+    </div>
+  </dialog>
+  <dialog id="provider-modal" class="form-dialog" aria-labelledby="provider-modal-title">
+    <form id="provider-form">
+      <div class="dialog-heading"><div><div class="eyebrow">PROVIDER</div><h2 id="provider-modal-title">添加供应商</h2></div><button type="button" class="icon-button" data-close="provider-modal" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button></div>
+      <label class="field" id="template-field">预设<select id="provider-template"><option value="custom">自定义 / OpenAI 兼容</option><option value="deepseek">DeepSeek 官方</option><option value="openai">OpenAI 官方</option><option value="anthropic">Anthropic 官方</option></select></label>
+      <div class="form-two"><label class="field">显示名称<input id="provider-name" required maxlength="60" autocomplete="off" placeholder="例如：DeepSeek 研发"></label><label class="field">接入协议<select id="provider-protocol"><option value="openai-chat">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic">Anthropic Messages</option></select></label></div>
+      <label class="field">Base URL<input id="provider-url" required type="url" placeholder="https://api.example.com/v1" autocomplete="off"><small>填写接口基础地址，不包含 /chat/completions、/responses 或 /messages。</small></label>
+      <label class="field">模型列表<textarea id="provider-models" required rows="3" placeholder="每行一个模型 ID，或用逗号分隔"></textarea></label>
+      <div class="form-two"><label class="field">默认模型<input id="provider-default-model" required placeholder="模型 ID" autocomplete="off"></label><label class="field">密钥选择<select id="provider-policy"><option value="round_robin">轮询已启用密钥</option><option value="priority">优先使用首个可用密钥</option></select></label></div>
+      <div class="form-error" id="provider-form-error" hidden role="alert"></div>
+      <div class="form-actions"><button type="button" class="button" data-close="provider-modal">取消</button><button type="submit" class="button primary">保存供应商</button></div>
+    </form>
+  </dialog>
+  <dialog id="key-modal" class="form-dialog" aria-labelledby="key-modal-title">
+    <form id="key-form">
+      <div class="dialog-heading"><div><div class="eyebrow">API CREDENTIAL</div><h2 id="key-modal-title">添加密钥</h2></div><button type="button" class="icon-button" data-close="key-modal" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button></div>
+      <label class="field">密钥名称<input id="key-label" required maxlength="60" autocomplete="off" placeholder="例如：开发环境 / 审查专用"></label>
+      <label class="field"><span id="key-value-label">API Key</span><span class="secret-input"><input id="key-value" type="password" required autocomplete="new-password" spellcheck="false" placeholder="粘贴 API key"><button type="button" class="icon-button" id="toggle-key" aria-label="显示输入的密钥" title="显示输入的密钥"><i data-lucide="eye"></i></button></span><small id="key-help">使用当前 Windows 账户加密保存，保存后不再回显。</small></label>
+      <div class="form-error" id="key-form-error" hidden role="alert"></div>
+      <div class="form-actions"><button type="button" class="button" data-close="key-modal">取消</button><button type="submit" class="button primary">保存密钥</button></div>
+    </form>
+  </dialog>
+  <dialog id="task-modal" class="form-dialog" aria-labelledby="task-modal-title">
+    <form id="task-form">
+      <div class="dialog-heading"><div><div class="eyebrow">DISPATCH</div><h2 id="task-modal-title">派发子任务</h2></div><button type="button" class="icon-button" data-close="task-modal" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button></div>
+      <div class="form-two"><label class="field">供应商<select id="task-provider" required></select></label><label class="field">模型<select id="task-model" required></select></label></div>
+      <label class="field">API Key<select id="task-key"><option value="">按供应商策略选择</option></select></label>
+      <div class="form-two"><label class="field">角色<select id="task-role"><option value="analyst">分析</option><option value="reviewer">审查</option><option value="planner">规划</option></select></label><label class="field">输出上限<input id="task-max-tokens" type="number" min="256" max="16384" step="1" value="4096" required></label></div>
+      <label class="field">任务<textarea id="task-prompt" rows="4" required maxlength="100000" placeholder="需要完成的具体任务"></textarea></label>
+      <label class="field">上下文（可选）<textarea id="task-context" rows="3" maxlength="200000" placeholder="仅提供任务所需的内容"></textarea></label>
+      <p class="form-note">将向所选供应商发送过滤后的内容，并消耗该密钥对应账户的 API 额度。</p>
+      <div class="form-error" id="task-form-error" hidden role="alert"></div>
+      <div class="form-actions"><button type="button" class="button" data-close="task-modal">取消</button><button type="submit" class="button primary"><i data-lucide="send"></i>派发任务</button></div>
+    </form>
+  </dialog>
+  <dialog id="confirm-modal" class="form-dialog compact-dialog" aria-labelledby="confirm-title">
+    <div class="dialog-heading"><h2 id="confirm-title">确认删除</h2><button type="button" class="icon-button" data-close="confirm-modal" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button></div>
+    <p id="confirm-message" class="form-note"></p>
+    <div class="form-error" id="confirm-error" hidden role="alert"></div>
+    <div class="form-actions"><button type="button" class="button" data-close="confirm-modal">取消</button><button type="button" id="confirm-action" class="button danger">删除</button></div>
+  </dialog>
+  <dialog id="logging-modal" class="form-dialog" aria-labelledby="logging-title">
+    <form id="logging-form">
+      <div class="dialog-heading"><div><div class="eyebrow">REQUEST RECORDS</div><h2 id="logging-title">请求与响应记录</h2></div><button type="button" class="icon-button" data-close="logging-modal" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button></div>
+      <div class="record-policy"><div><h3>记录脱敏正文</h3><p>对之后派发的新请求生效</p></div><label class="switch-label"><input id="capture-bodies" type="checkbox" aria-label="记录脱敏正文"><span class="switch"></span></label></div>
+      <p class="form-note">开启后，请求和回复会经过规则脱敏，再使用当前 Windows 账户加密保存。每份输入和输出各最多 64,000 字符，保留 7 天、最多 500 条。关闭后停止记录新正文，已有记录仍按保留期清理。</p>
+      <p class="form-note">规则无法识别所有姓名、个人信息和业务机密。只有保留了完整请求内容，服务重启后才可手动恢复。重试可能重复计费，不会自动执行。</p>
+      <div class="form-error" id="logging-error" hidden role="alert"></div>
+      <div class="form-actions"><button type="button" class="button" data-close="logging-modal">取消</button><button type="submit" class="button primary" id="save-logging">保存设置</button></div>
+    </form>
+  </dialog>
+  <dialog id="retry-modal" class="form-dialog compact-dialog" aria-labelledby="retry-title">
+    <form id="retry-form">
+      <div class="dialog-heading"><div><div class="eyebrow">MANUAL RECOVERY</div><h2 id="retry-title">重试请求</h2></div><button type="button" class="icon-button" data-close="retry-modal" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button></div>
+      <p id="retry-summary" class="form-note"></p>
+      <label class="field">API Key<select id="retry-key"><option value="">按供应商策略选择</option></select></label>
+      <p class="form-note">将使用可恢复的脱敏请求创建一次新调用，原记录会保留。原请求仍可能在远端处理或计费，新调用也会消耗 API 额度。</p>
+      <div class="form-error" id="retry-error" hidden role="alert"></div>
+      <div class="form-actions"><button type="button" class="button" data-close="retry-modal">取消</button><button type="submit" class="button primary"><i data-lucide="rotate-ccw"></i>确认重试</button></div>
+    </form>
+  </dialog>
+  <div class="toast" id="toast" hidden role="status"></div>
+</body>
+</html>

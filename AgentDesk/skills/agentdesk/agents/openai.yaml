@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Desk 协作平台"
+  short_description: "选择供应商和密钥派发子任务，查看脱敏请求记录与手动恢复链路"
+  default_prompt: "使用 $agentdesk 查询已配置的供应商，按我的要求派发子任务并检查结果和脱敏记录。"

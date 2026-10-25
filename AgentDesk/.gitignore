@@ -1,0 +1,9 @@
+node_modules/
+.platform/
+.monitor/
+work/
+.env
+.env.*
+*.dpapi
+*.log
+*.tmp
