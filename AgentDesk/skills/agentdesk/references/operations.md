@@ -12,12 +12,16 @@
 | Requested cancellation | `task_cancel` | `job_id` |
 
 Roles are `analyst`, `reviewer`, and `planner`.
-The default output allowance is 4096 tokens; valid explicit values are 256–16384.
+There is no default output budget or local 16384-token ceiling. Omit `max_tokens`
+unless the user explicitly requests a budget; OpenAI-compatible requests then omit
+the corresponding output-limit parameter. An explicit value must be a positive
+safe integer and is subject to the upstream model's limits. Native Anthropic
+Messages requires an explicit budget and is rejected locally when it is absent.
 Task text is limited to 100,000 characters, context to 200,000, and combined
 task/context/history to 300,000. History accepts at most 20 user/assistant messages.
 These limits are ceilings, not target prompt sizes.
 
-The MCP server name `deepseek` is historical. Generic `task_*` tools can route to
+The MCP server name `deepseek`, when registered, is historical. Generic `task_*` tools can route to
 any configured provider. `deepseek_submit` specifically selects official DeepSeek.
 A configured name such as Gemini does not imply a native Gemini adapter;
 use the protocol, base URL, and model IDs already configured in Agent Desk.
@@ -28,13 +32,15 @@ The helper uses the installed `platform-client.mjs`; it never reads a provider
 credential directly. That client may start the local service if it is not running.
 It never starts a paid provider request merely to check status.
 
-Examples below use the copy shipped with the tool. The globally installed skill's
-`scripts/agentdesk.mjs` is equivalent.
+Resolve the absolute helper path under this skill first. Examples use a PowerShell
+variable; set it to the installed skill's `scripts/agentdesk.mjs` path. The repository
+copy resolves AgentDesk relative to itself. A global copy uses `local-installation.json`.
 
 ```powershell
-node 'E:\AITools\AgentDesk\skills\agentdesk\scripts\agentdesk.mjs' status
-node 'E:\AITools\AgentDesk\skills\agentdesk\scripts\agentdesk.mjs' provider_list
-'{}' | node 'E:\AITools\AgentDesk\skills\agentdesk\scripts\agentdesk.mjs' records
+$agentDeskHelper = '<absolute path to this skill>/scripts/agentdesk.mjs'
+node $agentDeskHelper status
+node $agentDeskHelper provider_list
+'{}' | node $agentDeskHelper records
 ```
 
 `status` returns only service version, loopback address, and feature flags.
@@ -51,16 +57,15 @@ Replace example IDs with actual UUIDs from provider metadata or prior results.
   "provider_id": "<provider UUID>",
   "role": "reviewer",
   "task": "Review the supplied change for concrete correctness problems.",
-  "context": "<minimal relevant code and requirements>",
-  "max_tokens": 2048
+  "context": "<minimal relevant code and requirements>"
 }
-'@ | node 'E:\AITools\AgentDesk\skills\agentdesk\scripts\agentdesk.mjs' task_submit
+'@ | node $agentDeskHelper task_submit
 ```
 
 ```powershell
 @'
 {"job_id":"<actual job UUID>","include_body":false}
-'@ | node 'E:\AITools\AgentDesk\skills\agentdesk\scripts\agentdesk.mjs' task_trace
+'@ | node $agentDeskHelper task_trace
 ```
 
 Use the corresponding action name with `{"job_id":"<actual job UUID>"}` for
@@ -75,7 +80,7 @@ or session credentials; inspect the local platform for further diagnosis.
 
 ## Provider And Key Configuration
 
-Launch `E:\AITools\AgentDesk\start-monitor.cmd` to open the current service.
+Launch `start-monitor.cmd` in the resolved AgentDesk directory to open the current service.
 The port is discovered from the local runtime; do not assume 4318 if another
 port was selected. Use `#providers` for configuration and `#tasks` for monitoring.
 

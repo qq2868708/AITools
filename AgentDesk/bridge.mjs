@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
 import { redact } from "./redact.mjs";
-import { UUID } from "./monitor-store.mjs";
+import { UUID, safeResponseMetadata } from "./monitor-store.mjs";
 import { buildRequest, parseResponse } from "./provider-adapters.mjs";
 
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
@@ -50,8 +50,8 @@ export class Bridge {
     }
     const context = input.context ?? "";
     if (typeof context !== "string" || context.length > 200000) throw new Error("context must be at most 200000 characters.");
-    const maxTokens = input.max_tokens ?? 4096;
-    if (!Number.isInteger(maxTokens) || maxTokens < 256 || maxTokens > 16384) throw new Error("max_tokens must be between 256 and 16384.");
+    const maxTokens = input.max_tokens ?? undefined;
+    if (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens < 1)) throw new Error("max_tokens must be a positive safe integer when supplied.");
     const history = input.history ?? [];
     if (!Array.isArray(history) || history.length > 20 || history.some(
       m => !m || !["user", "assistant"].includes(m.role) || typeof m.content !== "string" || m.content.length > 50000
@@ -66,6 +66,7 @@ export class Bridge {
     const key = route.key;
     const model = route.model;
     if (!key) throw new Error("No DeepSeek key configured. Run setup-key.cmd locally; do not paste the key into chat.");
+    if (route.protocol === "anthropic" && maxTokens === undefined) throw new Error("Anthropic Messages requires an explicit max_tokens value. Agent Desk does not invent an output budget.");
     if (input.parent_id && (route.allSecrets ?? [key]).some(secret => secret === input.parent_id)) {
       throw new Error("parent_id must not contain credentials.");
     }
@@ -153,10 +154,7 @@ export class Bridge {
       this.monitor.write({
         ...job,
         output_chars: job.result?.text?.length ?? 0,
-        prompt_tokens: job.result?.usage?.prompt_tokens,
-        completion_tokens: job.result?.usage?.completion_tokens,
-        total_tokens: job.result?.usage?.total_tokens,
-        truncated: job.result?.truncated
+        ...job.response_metadata
       });
       this.monitorHealthy = ![...this.jobs.values()].some(item => item.body_log_error);
     } catch {
@@ -201,9 +199,17 @@ export class Bridge {
       const data = await response.json();
       this.event(job, "response_received");
       const parsed = parseResponse(route.protocol, data);
+      job.response_metadata = safeResponseMetadata(parsed);
+      if (parsed.failed) {
+        job.error_code = "PROVIDER";
+        throw new Error("Provider response failed.");
+      }
       if (typeof parsed.text !== "string" || !parsed.text.trim()) {
-        job.error_code = "EMPTY_RESPONSE";
-        throw new Error("Provider returned no answer text.");
+        const outputLimit = ["max_output_tokens", "max_tokens", "length"].includes(parsed.finish_reason);
+        job.error_code = outputLimit ? "OUTPUT_LIMIT" : "EMPTY_RESPONSE";
+        throw new Error(outputLimit
+          ? "Provider exhausted the output token limit before returning answer text. Increase max_tokens or reduce the task."
+          : "Provider returned no answer text. Inspect response diagnostics for the finish reason and content types.");
       }
       if (job.status !== "running") return;
       job.status = "completed";
@@ -252,7 +258,7 @@ export class Bridge {
   result(id) {
     const job = this.jobs.get(id);
     if (!job) throw new Error("Unknown job ID. Jobs are kept in memory and are lost when this server restarts.");
-    return { job_id: id, status: job.status, result: job.result, error: job.error };
+    return { job_id: id, status: job.status, result: job.result, error: job.error, diagnostics: job.response_metadata };
   }
 
   cancel(id) {

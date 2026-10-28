@@ -16,7 +16,7 @@ const taskSchema = {
     role: { type: "string", enum: ["analyst", "reviewer", "planner"] },
     parent_id: { type: "string", format: "uuid" },
     model: { type: "string", description: "Model ID; defaults to the selected provider model." },
-    max_tokens: { type: "integer", minimum: 256, maximum: 16384, default: 4096 },
+    max_tokens: { type: "integer", minimum: 1, description: "Optional output budget, only when the user explicitly requests one. Omit to use the upstream model limit. Required by native Anthropic Messages." },
     history: {
       type: "array", maxItems: 20, items: {
         type: "object", properties: { role: { type: "string", enum: ["user", "assistant"] }, content: { type: "string", maxLength: 50000 } },

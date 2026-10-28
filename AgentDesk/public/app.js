@@ -4,7 +4,7 @@ const roles = { analyst: "分析", reviewer: "审查", planner: "规划" };
 const roleIcons = { analyst: "scan-search", reviewer: "file-check-2", planner: "git-branch" };
 const labels = { running: "进行中", completed: "已完成", failed: "失败", cancelled: "已取消", interrupted: "连接中断" };
 const errorLabels = { AUTH: "鉴权失败", BALANCE: "余额不足", RATE_LIMIT: "请求限流", BAD_REQUEST: "参数错误", PROVIDER: "服务端错误", NETWORK: "网络或响应错误", TIMEOUT: "本地等待超时", EMPTY_RESPONSE: "返回内容为空" };
-Object.assign(errorLabels, { INTERRUPTED: "进程中断，远端结果未知", RECORDING: "请求记录失败，未发送" });
+Object.assign(errorLabels, { OUTPUT_LIMIT: "输出额度耗尽，未生成答案", INTERRUPTED: "进程中断，远端结果未知", RECORDING: "请求记录失败，未发送" });
 const eventLabels = { accepted: "接收请求", routed: "选择供应商与密钥", redacted: "完成输入脱敏", request_saved: "请求正文已加密保存", sent: "发送 API 请求", headers_received: "收到 HTTP 响应", response_received: "收到响应内容", completed: "请求完成", failed: "请求失败", timed_out: "本地等待超时", cancelled: "停止本地等待", interrupted: "恢复启动时发现中断", response_saved: "响应记录已加密保存", recording_failed: "正文记录失败", retry_created: "创建手动重试" };
 const number = value => new Intl.NumberFormat("zh-CN").format(value ?? 0);
 const time = value => value ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(value)) : "—";
@@ -110,7 +110,11 @@ function renderDetail() {
     ["耗时", duration(elapsed(job))],
     ["输入 / 输出字符", `${number(job.input_chars)} / ${number(job.output_chars)}`],
     ["输入 / 输出 Tokens", `${job.prompt_tokens == null ? "—" : number(job.prompt_tokens)} / ${job.completion_tokens == null ? "—" : number(job.completion_tokens)}`],
-    ["输出上限", `${number(job.max_tokens)} tokens`],
+    ["推理 Tokens", job.reasoning_tokens == null ? "—" : number(job.reasoning_tokens)],
+    ["响应状态", job.response_status ?? "—"],
+    ["结束原因", job.finish_reason ?? "—"],
+    ["响应内容类型", job.content_types?.join(", ") || "—"],
+    ["输出上限", job.max_tokens == null ? "未设置（由上游决定）" : `${number(job.max_tokens)} tokens`],
     ["脱敏替换", `${number(job.redactions)} 处`],
     ["输出截断", job.truncated ? "是" : "否"]
   ];

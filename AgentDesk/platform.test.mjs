@@ -132,6 +132,21 @@ test("three protocols build correct routes, credential headers and normalize res
   assert.throws(() => validateBaseUrl("https://example.com/v1/chat/completions"));
 });
 
+test("OpenAI-compatible protocols omit unset budgets and preserve explicit budgets above the old ceiling", () => {
+  const messages = [{ role: "user", content: "Review" }];
+  for (const [protocol, base_url, field] of [
+    ["openai-chat", "https://api.deepseek.com", "max_tokens"],
+    ["openai-chat", "https://api.openai.com/v1", "max_completion_tokens"],
+    ["openai-responses", "https://example.invalid/v1", "max_output_tokens"]
+  ]) {
+    const route = { protocol, base_url, key: "synthetic-key" };
+    const unlimited = buildRequest(route, { model: "test-model", messages });
+    for (const key of ["max_tokens", "max_completion_tokens", "max_output_tokens"]) assert.equal(Object.hasOwn(unlimited.body, key), false);
+    const explicit = buildRequest(route, { model: "test-model", messages, max_tokens: 65536 });
+    assert.equal(explicit.body[field], 65536);
+  }
+});
+
 test("key validation does not send completions or return upstream secret/error bodies", async () => {
   let endpoint;
   const config = await registry({ fetchImpl: async (url, options) => {

@@ -1,5 +1,6 @@
 import { resolve, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ACTIONS = new Set(["status", "records", "provider_list", "task_submit", "task_result", "task_trace", "task_retry", "task_cancel"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -19,7 +20,9 @@ function options() {
   if (!args.length || args.includes("--help")) return { help: true };
   const action = args.shift();
   if (!ACTIONS.has(action)) throw new InputError("Unknown action. Run --help for supported actions.");
-  let home = process.env.AGENTDESK_HOME || "E:\\AITools\\AgentDesk";
+  const installationFile = new URL("../local-installation.json", import.meta.url);
+  const installation = existsSync(installationFile) ? JSON.parse(readFileSync(installationFile, "utf8")) : {};
+  let home = process.env.AGENTDESK_HOME || installation.home || fileURLToPath(new URL("../../../", import.meta.url));
   while (args.length) {
     if (args.shift() !== "--home" || !args.length) throw new InputError("Only --home <installation-directory> is supported.");
     home = args.shift();
@@ -61,7 +64,7 @@ function validate(action, input) {
     if (input.context != null && (typeof input.context !== "string" || input.context.length > 200000)) throw new InputError("context must contain at most 200000 characters.");
     if (input.role != null && !["analyst", "reviewer", "planner"].includes(input.role)) throw new InputError("Unknown task role.");
     if (input.model != null && (typeof input.model !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,149}$/.test(input.model))) throw new InputError("Invalid model ID.");
-    if (input.max_tokens != null && (!Number.isInteger(input.max_tokens) || input.max_tokens < 256 || input.max_tokens > 16384)) throw new InputError("max_tokens must be between 256 and 16384.");
+    if (input.max_tokens != null && (!Number.isSafeInteger(input.max_tokens) || input.max_tokens < 1)) throw new InputError("max_tokens must be a positive safe integer when supplied.");
     if (input.history != null && (!Array.isArray(input.history) || input.history.length > 20 || input.history.some(message =>
       !message || !["user", "assistant"].includes(message.role) || typeof message.content !== "string" ||
       message.content.length > 50000 || Object.keys(message).some(key => !["role", "content"].includes(key))
@@ -103,6 +106,8 @@ try {
   } else {
     const input = await readInput(action);
     validate(action, input);
+    // Windows PowerShell must discover its own modules when launched from PowerShell 7.
+    if (process.platform === "win32") delete process.env.PSModulePath;
     const client = await import(pathToFileURL(join(home, "platform-client.mjs")).href);
     let result;
     if (action === "status" || action === "records") {

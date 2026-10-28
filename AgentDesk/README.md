@@ -1,6 +1,6 @@
 # Agent Desk: Local API Platform
 
-Installed location: `E:\AITools\AgentDesk`.
+Use the `AgentDesk` directory in this checkout.
 Double-click `start-monitor.cmd` here to open the platform.
 Private state (`.platform/`, `.monitor/`), dependencies, test output (`work/`),
 environment files, and logs are excluded from Git by the local `.gitignore`.
@@ -8,7 +8,7 @@ Do not force-add these directories or files to source control.
 
 Manage multiple AI providers, multiple API keys per provider, model configuration,
 subtask dispatch, and redacted execution monitoring.
-The existing `deepseek` MCP registration now connects to this shared platform.
+An MCP registration, if configured, connects to this shared platform through `server.mjs`.
 Providers remain advisory workers without file or command execution tools.
 
 ## Activate
@@ -48,8 +48,11 @@ Not every vendor implements the complete compatible API or models endpoint.
 
 ## Tools
 
-A reusable Codex skill is included at `skills/agentdesk/SKILL.md` and installed
-in the current user's Codex skills directory. Invoke `$agentdesk` to route
+A reusable Codex skill is included at `skills/agentdesk/SKILL.md`. Install its folder
+in the current user's skills directory (for example `~/.agents/skills/agentdesk`),
+and add `local-installation.json` with `{"home":"<absolute AgentDesk directory>"}`.
+The repository helper resolves this checkout directly; `--home` or `AGENTDESK_HOME`
+can override the location. Invoke `$agentdesk` to route
 authorized work through the platform. The skill prefers MCP and includes a
 local CLI fallback; it does not store keys or authorize automatic paid retries.
 
@@ -73,6 +76,15 @@ Key replacement or endpoint changes reset relevant validation state.
 Deleting providers/keys used by running tasks is blocked until those tasks finish or are cancelled.
 
 Tasks support explicit user/assistant history and a 180-second local timeout.
+Output budgets are optional with no default and no local 16384-token ceiling.
+OpenAI-compatible requests omit the output-limit parameter unless `max_tokens`
+is explicitly supplied; upstream model limits still apply. Native Anthropic
+Messages requires an explicit `max_tokens` value and rejects omission locally.
+Results and trace metadata preserve token usage, reported reasoning usage,
+response status, finish reason, and allowlisted content types even when no answer
+text is returned. An explicit output-limit finish reason with no answer is
+`OUTPUT_LIMIT`; other answerless responses remain `EMPTY_RESPONSE`. This does
+not trigger an automatic retry. Diagnostic metadata contains no response text.
 There are at most two concurrent tasks across the platform, and the latest 30 task results
 remain in memory. Closing an MCP client does not stop its tasks. Restarting the
 platform loses in-memory results; safe historical metadata survives.

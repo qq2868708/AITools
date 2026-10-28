@@ -127,7 +127,7 @@
       <div class="dialog-heading"><div><div class="eyebrow">DISPATCH</div><h2 id="task-modal-title">派发子任务</h2></div><button type="button" class="icon-button" data-close="task-modal" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button></div>
       <div class="form-two"><label class="field">供应商<select id="task-provider" required></select></label><label class="field">模型<select id="task-model" required></select></label></div>
       <label class="field">API Key<select id="task-key"><option value="">按供应商策略选择</option></select></label>
-      <div class="form-two"><label class="field">角色<select id="task-role"><option value="analyst">分析</option><option value="reviewer">审查</option><option value="planner">规划</option></select></label><label class="field">输出上限<input id="task-max-tokens" type="number" min="256" max="16384" step="1" value="4096" required></label></div>
+      <div class="form-two"><label class="field">角色<select id="task-role"><option value="analyst">分析</option><option value="reviewer">审查</option><option value="planner">规划</option></select></label><label class="field">输出上限（可选）<input id="task-max-tokens" type="number" min="1" step="1" placeholder="不设限，由上游决定"></label></div>
       <label class="field">任务<textarea id="task-prompt" rows="4" required maxlength="100000" placeholder="需要完成的具体任务"></textarea></label>
       <label class="field">上下文（可选）<textarea id="task-context" rows="3" maxlength="200000" placeholder="仅提供任务所需的内容"></textarea></label>
       <p class="form-note">将向所选供应商发送过滤后的内容，并消耗该密钥对应账户的 API 额度。</p>

@@ -8,12 +8,31 @@ export const DEFAULT_DATA_DIR = fileURLToPath(new URL("./.monitor", import.meta.
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const VALID_ROLES = ["analyst", "reviewer", "planner"];
 const VALID_STATES = ["running", "completed", "failed", "cancelled", "interrupted"];
-const ERRORS = ["AUTH", "BALANCE", "RATE_LIMIT", "BAD_REQUEST", "PROVIDER", "NETWORK", "TIMEOUT", "EMPTY_RESPONSE", "INTERRUPTED", "RECORDING"];
+const ERRORS = ["AUTH", "BALANCE", "RATE_LIMIT", "BAD_REQUEST", "PROVIDER", "NETWORK", "TIMEOUT", "EMPTY_RESPONSE", "OUTPUT_LIMIT", "INTERRUPTED", "RECORDING"];
 const EVENTS = ["accepted", "routed", "redacted", "request_saved", "sent", "headers_received", "response_received", "completed", "failed", "timed_out", "cancelled", "interrupted", "response_saved", "recording_failed", "retry_created"];
 const RETENTION_MS = 7 * 86400000;
 const number = (value, max = 1e10) => Number.isFinite(value) && value >= 0 ? Math.min(Math.floor(value), max) : 0;
 const nullableNumber = value => Number.isFinite(value) && value >= 0 ? number(value) : null;
 const timestamp = value => typeof value === "string" && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(value) && Number.isFinite(Date.parse(value)) ? value : null;
+const RESPONSE_STATES = ["completed", "incomplete", "failed", "in_progress", "queued", "cancelled"];
+const FINISH_REASONS = ["completed", "incomplete", "failed", "stop", "length", "content_filter", "tool_calls", "function_call", "max_tokens", "max_output_tokens", "end_turn", "stop_sequence", "tool_use", "pause_turn", "refusal", "safety"];
+const CONTENT_TYPES = ["message", "output_text", "text", "reasoning", "thinking", "redacted_thinking", "refusal", "tool_call", "function_call", "tool_use"];
+const category = (value, allowed) => value == null ? null : allowed.includes(value) ? value : "other";
+
+// Only fixed categories and numeric usage may enter metadata, never upstream text.
+export function safeResponseMetadata(source) {
+  const usage = source.usage ?? source;
+  return {
+    prompt_tokens: nullableNumber(usage.prompt_tokens),
+    completion_tokens: nullableNumber(usage.completion_tokens),
+    total_tokens: nullableNumber(usage.total_tokens),
+    reasoning_tokens: nullableNumber(source.reasoning_tokens),
+    response_status: category(source.response_status, RESPONSE_STATES),
+    finish_reason: category(source.finish_reason, FINISH_REASONS),
+    content_types: Array.isArray(source.content_types) ? [...new Set(source.content_types.slice(0, 64).map(value => category(value, CONTENT_TYPES)).filter(Boolean))] : [],
+    truncated: source.truncated === true
+  };
+}
 
 // This whitelist is the only path from jobs into durable storage and the browser.
 // Never add task text, provider messages, free-form errors, or credentials here.
@@ -42,13 +61,10 @@ export function safeRecord(source) {
     finished_at: timestamp(source.finished_at),
     input_chars: number(source.input_chars),
     output_chars: number(source.output_chars),
-    max_tokens: number(source.max_tokens, 16384),
+    max_tokens: Number.isSafeInteger(source.max_tokens) && source.max_tokens > 0 ? source.max_tokens : null,
     redactions: number(source.redactions),
-    prompt_tokens: nullableNumber(source.prompt_tokens),
-    completion_tokens: nullableNumber(source.completion_tokens),
-    total_tokens: nullableNumber(source.total_tokens),
+    ...safeResponseMetadata(source),
     error_code: ERRORS.includes(source.error_code) ? source.error_code : null,
-    truncated: source.truncated === true,
     http_status: Number.isInteger(source.http_status) && source.http_status >= 100 && source.http_status <= 599 ? source.http_status : null,
     sent_at: timestamp(source.sent_at),
     response_at: timestamp(source.response_at),

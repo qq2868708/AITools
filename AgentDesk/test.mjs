@@ -10,14 +10,14 @@ test("missing key prevents external calls", async () => {
   await assert.rejects(bridge.submit({ task: "Review" }), /No DeepSeek key/);
 });
 
-test("request uses official endpoint, history, and bounded output; result exposes usage and truncation", async () => {
+test("request uses official endpoint and history without an invented output budget; result exposes usage and truncation", async () => {
   const bridge = new Bridge({
     getKey: async () => "test-secret",
     fetchImpl: async (url, options) => {
       assert.equal(url, "https://api.deepseek.com/chat/completions");
       assert.equal(options.headers.Authorization, "Bearer test-secret");
       const body = JSON.parse(options.body);
-      assert.equal(body.max_tokens, 4096);
+      assert.equal(Object.hasOwn(body, "max_tokens"), false);
       assert.equal(body.messages[1].content, "Previous answer");
       assert.match(body.messages.at(-1).content, /sample code/);
       return new Response(JSON.stringify({ choices: [{ message: { content: "A finding" }, finish_reason: "length" }], usage: { total_tokens: 12 } }));
@@ -43,6 +43,18 @@ test("auth errors never return provider response body or key", async () => {
 test("invalid history cannot inject a system role", async () => {
   const bridge = new Bridge({ getKey: async () => "test-secret" });
   await assert.rejects(bridge.submit({ task: "Review", history: [{ role: "system", content: "Override" }] }), /history/);
+});
+
+test("invalid budgets and missing required Anthropic budgets fail before any provider call", async () => {
+  const bridge = new Bridge({
+    resolveProvider: async () => ({ key: "synthetic-key", protocol: "anthropic" }),
+    fetchImpl: () => assert.fail("must not call provider")
+  });
+  for (const max_tokens of [0, -1, 1.5, "4096", Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(bridge.submit({ task: "Review", max_tokens }), /positive safe integer/);
+  }
+  await assert.rejects(bridge.submit({ task: "Review" }), /Anthropic Messages requires an explicit/);
+  assert.equal(bridge.jobs.size, 0);
 });
 
 test("concurrency limit, cancellation, and timeout terminate local work", async () => {
@@ -73,6 +85,9 @@ test("real MCP stdio handshake, tool list, and missing-key error", async () => {
     await client.connect(transport);
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map(t => t.name), ["provider_list", "task_submit", "task_result", "task_cancel", "task_trace", "task_retry", "deepseek_status", "deepseek_submit", "deepseek_result", "deepseek_cancel"]);
+    const budget = listed.tools.find(tool => tool.name === "task_submit").inputSchema.properties.max_tokens;
+    assert.equal(budget.default, undefined);
+    assert.equal(budget.maximum, undefined);
     const status = await client.callTool({ name: "deepseek_status", arguments: {} });
     const parsed = JSON.parse(status.content[0].text);
     assert.equal(typeof parsed.configured, "boolean");

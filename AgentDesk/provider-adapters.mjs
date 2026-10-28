@@ -36,12 +36,15 @@ export function buildRequest({ protocol, base_url, key }, { model, messages, max
       messages: messages.filter(m => m.role !== "system"), max_tokens, stream: false };
   } else if (protocol === "openai-responses") {
     suffix = "/responses";
-    body = { model, input: messages, max_output_tokens: max_tokens, stream: false, store: false };
+    body = { model, input: messages, stream: false, store: false };
+    if (max_tokens != null) body.max_output_tokens = max_tokens;
   } else {
     suffix = "/chat/completions";
     body = { model, messages, stream: false };
-    if (providerKind(base) === "OpenAI") body.max_completion_tokens = max_tokens;
-    else body.max_tokens = max_tokens;
+    if (max_tokens != null) {
+      if (providerKind(base) === "OpenAI") body.max_completion_tokens = max_tokens;
+      else body.max_tokens = max_tokens;
+    }
     if (providerKind(base) === "DeepSeek") body.thinking = { type: "disabled" };
   }
   return { url: `${base}${suffix}`, headers: authHeaders(protocol, key), body };
@@ -57,17 +60,21 @@ export function parseResponse(protocol, data) {
     return {
       text: data.content?.filter(part => part.type === "text").map(part => part.text).join("\n"),
       model: data.model, finish_reason: data.stop_reason,
+      content_types: data.content?.map(part => part.type) ?? [],
       truncated: data.stop_reason === "max_tokens",
       usage: { prompt_tokens: input == null ? undefined : input + cacheRead + cacheCreate,
         completion_tokens: output, total_tokens: input == null || output == null ? undefined : input + output + cacheRead + cacheCreate }
     };
   }
   if (protocol === "openai-responses") {
-    if (data.error || data.status === "failed") throw new Error("Provider response failed.");
     return {
+      failed: Boolean(data.error || data.status === "failed"),
       text: data.output?.filter(item => item.type === "message").flatMap(item => item.content ?? [])
         .filter(part => part.type === "output_text").map(part => part.text).join("\n"),
       model: data.model, finish_reason: data.incomplete_details?.reason ?? data.status,
+      response_status: data.status,
+      content_types: data.output?.flatMap(item => [item.type, ...(item.content ?? []).map(part => part.type)]) ?? [],
+      reasoning_tokens: numeric(data.usage?.output_tokens_details?.reasoning_tokens),
       truncated: data.status === "incomplete",
       usage: { prompt_tokens: numeric(data.usage?.input_tokens), completion_tokens: numeric(data.usage?.output_tokens), total_tokens: numeric(data.usage?.total_tokens) }
     };
@@ -75,6 +82,13 @@ export function parseResponse(protocol, data) {
   return {
     text: data.choices?.[0]?.message?.content,
     model: data.model, finish_reason: data.choices?.[0]?.finish_reason,
+    content_types: [
+      ...(data.choices?.[0]?.message?.content ? ["text"] : []),
+      ...(data.choices?.[0]?.message?.reasoning_content ? ["reasoning"] : []),
+      ...(data.choices?.[0]?.message?.refusal ? ["refusal"] : []),
+      ...(data.choices?.[0]?.message?.tool_calls?.length ? ["tool_call"] : [])
+    ],
+    reasoning_tokens: numeric(data.usage?.completion_tokens_details?.reasoning_tokens),
     truncated: data.choices?.[0]?.finish_reason === "length",
     usage: { prompt_tokens: numeric(data.usage?.prompt_tokens), completion_tokens: numeric(data.usage?.completion_tokens), total_tokens: numeric(data.usage?.total_tokens) }
   };

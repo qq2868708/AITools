@@ -4,7 +4,7 @@
   const ui = { data: { providers: [], default_provider_id: null }, selected: null, providerEdit: null, keyEdit: null, token: null, busy: new Set() };
   const protocolNames = { "openai-chat": "OpenAI Chat Completions", "openai-responses": "OpenAI Responses", anthropic: "Anthropic Messages" };
   const healthNames = { healthy: "可用", untested: "未验证", error: "异常" };
-  const errorNames = { AUTH: "鉴权失败", BALANCE: "余额不足", RATE_LIMIT: "请求限流", NETWORK: "连接失败", PROVIDER: "接口错误", UNSUPPORTED: "该接口不支持模型列表验证" };
+  const errorNames = { AUTH: "鉴权失败", BALANCE: "余额不足", RATE_LIMIT: "请求限流", NETWORK: "连接失败", PROVIDER: "接口错误", EMPTY_RESPONSE: "未返回答案文本", OUTPUT_LIMIT: "输出额度耗尽，未生成答案", UNSUPPORTED: "该接口不支持模型列表验证" };
   const errorMessages = {
     "Provider name already exists.": "供应商名称已存在。",
     "This key already exists for this provider.": "该供应商已保存此密钥。",
@@ -329,9 +329,10 @@
     withForm(event.target, "task-form-error", async () => {
       const args = {
         provider_id: el("task-provider").value, model: el("task-model").value,
-        role: el("task-role").value, max_tokens: Number(el("task-max-tokens").value),
+        role: el("task-role").value,
         task: el("task-prompt").value, context: el("task-context").value
       };
+      if (el("task-max-tokens").value.trim()) args.max_tokens = Number(el("task-max-tokens").value);
       if (el("task-key").value) args.key_id = el("task-key").value;
       const result = await api("/api/rpc", "POST", { action: "task_submit", args });
       el("task-form").reset(); el("task-modal").close();

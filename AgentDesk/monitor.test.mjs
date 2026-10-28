@@ -50,11 +50,120 @@ test("durable schema drops all free text and invalid provider usage", () => {
   const safe = safeRecord({
     ...base(), task: "SECRET_TASK", result: "SECRET_RESPONSE", error: "SECRET_ERROR",
     password: "SECRET_KEY", model: "sk-SECRET_MODEL", parent_id: "SECRET_PARENT",
-    total_tokens: "SECRET_USAGE", error_code: "SECRET_ERROR_CODE"
+    total_tokens: "SECRET_USAGE", error_code: "SECRET_ERROR_CODE",
+    response_status: "SECRET_STATUS", finish_reason: "SECRET_FINISH",
+    content_types: ["reasoning", "SECRET_TYPE"], reasoning_tokens: "SECRET_REASONING",
+    raw_response: "SECRET_RAW_RESPONSE"
   });
   assert.ok(!JSON.stringify(safe).includes("SECRET"));
   assert.equal(safe.total_tokens, null);
   assert.equal(safe.model, "custom-model");
+  assert.equal(safe.response_status, "other");
+  assert.equal(safe.finish_reason, "other");
+  assert.deepEqual(safe.content_types, ["reasoning", "other"]);
+  assert.equal(safe.reasoning_tokens, null);
+});
+
+test("answerless responses retain safe diagnostics and distinguish output limits without retrying", async t => {
+  const usage = { input_tokens: 600, output_tokens: 4096, total_tokens: 4696,
+    output_tokens_details: { reasoning_tokens: 4096 } };
+  const cases = [
+    {
+      name: "Responses reasoning exhausts the budget before an answer", protocol: "openai-responses",
+      data: { status: "incomplete", incomplete_details: { reason: "max_output_tokens" },
+        output: [{ type: "reasoning", summary: [{ text: "PRIVATE_REASONING" }] }], usage },
+      error: "OUTPUT_LIMIT", finish: "max_output_tokens", types: ["reasoning"], reasoning: 4096, truncated: true
+    },
+    {
+      name: "Chat reasoning exhausts the budget before an answer", protocol: "openai-chat",
+      data: { choices: [{ finish_reason: "length", message: { content: null, reasoning_content: "PRIVATE_REASONING" } }],
+        usage: { prompt_tokens: 600, completion_tokens: 4096, total_tokens: 4696, completion_tokens_details: { reasoning_tokens: 4096 } } },
+      error: "OUTPUT_LIMIT", finish: "length", types: ["reasoning"], reasoning: 4096, truncated: true
+    },
+    {
+      name: "Anthropic thinking exhausts the budget before an answer", protocol: "anthropic",
+      data: { stop_reason: "max_tokens", content: [{ type: "thinking", thinking: "PRIVATE_REASONING" }], usage },
+      error: "OUTPUT_LIMIT", finish: "max_tokens", types: ["thinking"], reasoning: null, truncated: true
+    },
+    {
+      name: "A completed reasoning-only response does not imply a budget failure", protocol: "openai-responses",
+      data: { status: "completed", output: [{ type: "reasoning", summary: [{ text: "PRIVATE_REASONING" }] }], usage },
+      error: "EMPTY_RESPONSE", finish: "completed", types: ["reasoning"], reasoning: 4096, truncated: false
+    },
+    {
+      name: "A refusal is visible as a content type without storing its text", protocol: "openai-responses",
+      data: { status: "completed", output: [{ type: "message", content: [{ type: "refusal", refusal: "PRIVATE_REFUSAL" }] }], usage },
+      error: "EMPTY_RESPONSE", finish: "completed", types: ["message", "refusal"], reasoning: 4096, truncated: false
+    },
+    {
+      name: "A failed provider response retains metadata and stays a failure", protocol: "openai-responses",
+      data: { status: "failed", error: { message: "PRIVATE_PROVIDER_ERROR" },
+        output: [{ type: "message", content: [{ type: "output_text", text: "PRIVATE_ANSWER" }] }], usage },
+      error: "PROVIDER", finish: "failed", types: ["message", "output_text"], reasoning: 4096, truncated: false
+    },
+    {
+      name: "A partial answer remains available with its truncation flag", protocol: "openai-responses",
+      data: { status: "incomplete", incomplete_details: { reason: "max_output_tokens" },
+        output: [{ type: "message", content: [{ type: "output_text", text: "PRIVATE_PARTIAL_ANSWER" }] }], usage },
+      error: null, finish: "max_output_tokens", types: ["message", "output_text"], reasoning: 4096, truncated: true
+    }
+  ];
+  for (const fixture of cases) await t.test(fixture.name, async () => {
+    const directory = temp();
+    const store = new MonitorStore(directory);
+    let calls = 0;
+    const bridge = new Bridge({
+      monitor: store,
+      resolveProvider: async () => ({ key: "synthetic-secret", protocol: fixture.protocol,
+        base_url: "https://example.invalid/v1", model: "test-model", provider: "Custom" }),
+      fetchImpl: async () => { calls++; return new Response(JSON.stringify(fixture.data)); }
+    });
+    const { job_id } = await bridge.submit({ task: "PRIVATE_TASK", max_tokens: 4096 });
+    await bridge.jobs.get(job_id).done;
+    const result = bridge.result(job_id);
+    const record = store.readAll()[0];
+    assert.equal(calls, 1);
+    assert.equal(result.status, fixture.error ? "failed" : "completed");
+    assert.equal(record.http_status, 200);
+    assert.equal(record.error_code, fixture.error);
+    assert.equal(record.finish_reason, fixture.finish);
+    assert.equal(record.response_status, fixture.data.status ?? null);
+    assert.deepEqual(record.content_types, fixture.types);
+    assert.equal(record.prompt_tokens, 600);
+    assert.equal(record.completion_tokens, 4096);
+    assert.equal(record.total_tokens, 4696);
+    assert.equal(record.reasoning_tokens, fixture.reasoning);
+    assert.equal(record.truncated, fixture.truncated);
+    for (const field of ["finish_reason", "response_status", "content_types", "prompt_tokens", "completion_tokens", "reasoning_tokens", "truncated"]) {
+      assert.deepEqual(result.diagnostics[field], record[field]);
+    }
+    if (fixture.error) assert.equal(result.result, undefined);
+    else assert.equal(result.result.text, "PRIVATE_PARTIAL_ANSWER");
+    const disk = readdirSync(directory).map(file => readFileSync(join(directory, file), "utf8")).join("");
+    assert.ok(!disk.includes("PRIVATE_"));
+    assert.ok(!disk.includes("synthetic-secret"));
+  });
+});
+
+test("omitted and explicit large budgets survive dispatch, replay input and persisted metadata", async () => {
+  for (const max_tokens of [undefined, 65536]) {
+    const store = new MonitorStore(temp());
+    const bridge = new Bridge({
+      monitor: store,
+      resolveProvider: async () => ({ key: "synthetic-key", protocol: "openai-responses", base_url: "https://example.invalid/v1", model: "test-model" }),
+      fetchImpl: async (_, options) => {
+        const body = JSON.parse(options.body);
+        assert.equal(Object.hasOwn(body, "max_output_tokens"), max_tokens !== undefined);
+        assert.equal(body.max_output_tokens, max_tokens);
+        return new Response(JSON.stringify({ status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "OK" }] }] }));
+      }
+    });
+    const { job_id } = await bridge.submit({ task: "Review", max_tokens });
+    await bridge.jobs.get(job_id).done;
+    assert.equal(bridge.result(job_id).status, "completed");
+    assert.equal(bridge.jobs.get(job_id).retry_input.max_tokens, max_tokens);
+    assert.equal(store.readAll()[0].max_tokens, max_tokens ?? null);
+  }
 });
 
 test("real bridge filters outgoing text and returned answer; storage contains metadata only", async () => {
