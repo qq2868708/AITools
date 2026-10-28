@@ -44,8 +44,11 @@ USER_HOME = Path(os.environ.get("USERPROFILE", str(Path.home())))
 STATE_LOCK = threading.RLock()
 PROCESSES: dict[str, subprocess.Popen[Any]] = {}
 PROCESS_STARTED: dict[str, str] = {}
+PROCESS_STARTED_MONOTONIC: dict[str, float] = {}
+PROCESS_CONFIRMED: set[str] = set()
 PROCESS_SNAPSHOT: list[dict[str, Any]] = []
 PROCESS_SNAPSHOT_TIME = 0.0
+STARTUP_GRACE_SECONDS = 20.0
 
 
 def utc_now() -> str:
@@ -120,25 +123,21 @@ def get_codex_processes() -> list[dict[str, Any]]:
     return PROCESS_SNAPSHOT
 
 
-def profile_appdata_roots(profile: dict[str, Any]) -> list[Path]:
-    roots = [
-        profile_root(profile["id"]) / "codex-home" / "appdata" / "Roaming",
-    ]
+def profile_runtime_paths(profile: dict[str, Any]) -> tuple[Path, Path, Path]:
+    """Imported profiles control their original home; new profiles stay isolated."""
     source_root = str(profile.get("sourceRoot") or "").strip()
     source_appdata = str(profile.get("sourceAppData") or "").strip()
-    if source_appdata:
-        roots.append(Path(source_appdata))
-    elif source_root:
-        roots.append(Path(source_root) / "appdata" / "Roaming")
-    return roots
+    home = Path(source_root) if source_root else profile_root(profile["id"]) / "codex-home"
+    roaming = Path(source_appdata) if source_appdata else home / "appdata" / "Roaming"
+    return home, roaming, roaming.parent / "Local"
 
 
 def discover_profile_processes(profile: dict[str, Any]) -> list[int]:
-    markers = [
-        str(path).replace("/", "\\").rstrip("\\").lower()
-        for path in profile_appdata_roots(profile)
-        if path
-    ]
+    _, roaming, _ = profile_runtime_paths(profile)
+    # Match the actual Electron user-data argument, not an arbitrary occurrence
+    # of a parent directory or another profile with a similar path prefix.
+    marker = str(roaming / "Codex").replace("/", "\\").rstrip("\\").lower()
+    pattern = re.compile(r'--user-data-dir="?' + re.escape(marker) + r'(?:\\|"|\s|$)')
     records = get_codex_processes()
     processes_by_id = {
         int(record["ProcessId"]): record
@@ -148,7 +147,7 @@ def discover_profile_processes(profile: dict[str, Any]) -> list[int]:
     matched_ids = {
         int(record["ProcessId"])
         for record in records
-        if any(marker in str(record.get("CommandLine") or "").lower() for marker in markers)
+        if pattern.search(str(record.get("CommandLine") or "").replace("/", "\\").lower())
     }
     root_ids: set[int] = set()
     for process_id in matched_ids:
@@ -215,6 +214,8 @@ def write_profile_files(profile: dict[str, Any]) -> None:
         "sourceRoot": profile.get("sourceRoot", ""),
         "sourceAppData": profile.get("sourceAppData", ""),
     }
+    runtime_home, runtime_roaming, runtime_local = profile_runtime_paths(profile)
+    persisted.update(runtimeHome=str(runtime_home), runtimeAppData=str(runtime_roaming), runtimeLocalAppData=str(runtime_local))
     (root / "profile.json").write_text(json.dumps(persisted, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -242,17 +243,30 @@ def sanitize_profile(profile: dict[str, Any]) -> dict[str, Any]:
     profile_id = profile["id"]
     process = PROCESSES.get(profile_id)
     discovered_pids = discover_profile_processes(profile)
-    if process is None:
-        status = "running" if discovered_pids else "stopped"
-        pid = discovered_pids[0] if discovered_pids else None
-    elif process.poll() is None:
+    started_monotonic = PROCESS_STARTED_MONOTONIC.get(profile_id)
+    startup_age = time.monotonic() - started_monotonic if started_monotonic is not None else None
+
+    if discovered_pids:
+        PROCESS_CONFIRMED.add(profile_id)
         status = "running"
-        pid = process.pid
+        pid = discovered_pids[0]
+    elif profile_id in PROCESS_CONFIRMED:
+        status = "stopped"
+        pid = None
+    elif process is not None and process.poll() not in (None, 0):
+        status = "failed"
+        pid = None
+    elif startup_age is not None and startup_age < STARTUP_GRACE_SECONDS:
+        status = "starting"
+        pid = process.pid if process is not None else None
+    elif process is not None:
+        # A wrapper remaining alive is not proof that the GUI started.
+        status = "failed"
+        pid = None
     else:
-        status = "running" if discovered_pids else ("failed" if process.returncode else "stopped")
-        pid = discovered_pids[0] if discovered_pids else process.pid
-        PROCESSES.pop(profile_id, None)
-        PROCESS_STARTED.pop(profile_id, None)
+        status = "stopped"
+        pid = None
+
     return {
         "id": profile_id,
         "name": profile.get("name", profile_id),
@@ -269,6 +283,10 @@ def sanitize_profile(profile: dict[str, Any]) -> dict[str, Any]:
         "pid": pid,
         "startedAt": PROCESS_STARTED.get(profile_id),
         "detectedPids": discovered_pids,
+        "managedPids": discovered_pids,
+        "externalPids": [],
+        "runtimeHome": str(profile_runtime_paths(profile)[0]),
+        "usesSourceConfig": bool(profile.get("sourceRoot")),
     }
 
 
@@ -407,6 +425,7 @@ def upsert_profile(payload: dict[str, Any]) -> dict[str, Any]:
         protected = protect_token(str(token).strip())
 
     profile = {
+        **old,
         "id": profile_id,
         "name": str(payload.get("name") or old.get("name") or profile_id).strip(),
         "isDefault": bool(old.get("isDefault", not profiles)),
@@ -435,14 +454,15 @@ def upsert_profile(payload: dict[str, Any]) -> dict[str, Any]:
 def launch_profile(profile: dict[str, Any]) -> dict[str, Any]:
     if not profile.get("tokenProtected"):
         raise ValueError("请先配置 TokenAPI Token")
-    profile_root(profile["id"]).mkdir(parents=True, exist_ok=True)
-    write_profile_files(profile)
     with STATE_LOCK:
-        current = PROCESSES.get(profile["id"])
-        if current is not None and current.poll() is None:
-            raise ValueError("该实例已经在运行")
         if discover_profile_processes(profile):
-            raise ValueError("该实例已经在运行")
+            return sanitize_profile(profile)
+        current = PROCESSES.get(profile["id"])
+        if current is not None and sanitize_profile(profile)["status"] == "starting":
+            return sanitize_profile(profile)
+        write_profile_files(profile)
+        PROCESS_CONFIRMED.discard(profile["id"])
+        (profile_root(profile["id"]) / "stop.requested").unlink(missing_ok=True)
         script = ROOT / "launch-profile.ps1"
         command = [
             POWERSHELL,
@@ -470,6 +490,7 @@ def launch_profile(profile: dict[str, Any]) -> dict[str, Any]:
         )
         PROCESSES[profile["id"]] = process
         PROCESS_STARTED[profile["id"]] = utc_now()
+        PROCESS_STARTED_MONOTONIC[profile["id"]] = time.monotonic()
     return sanitize_profile(profile)
 
 
@@ -477,10 +498,13 @@ def stop_profile(profile_id: str) -> None:
     with STATE_LOCK:
         process = PROCESSES.get(profile_id)
         profile = next((item for item in load_profiles() if item.get("id") == profile_id), None)
-    pids = set(discover_profile_processes(profile)) if profile else set()
+        if profile:
+            profile_root(profile_id).mkdir(parents=True, exist_ok=True)
+            (profile_root(profile_id) / "stop.requested").touch()
+    managed_pids = set(discover_profile_processes(profile)) if profile else set()
     if process is not None and process.poll() is None:
-        pids.add(process.pid)
-    for pid in sorted(pids):
+        managed_pids.add(process.pid)
+    for pid in sorted(managed_pids):
         subprocess.run(
             ["taskkill.exe", "/PID", str(pid), "/T", "/F"],
             capture_output=True,
@@ -492,8 +516,15 @@ def stop_profile(profile_id: str) -> None:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
+    PROCESSES.pop(profile_id, None)
+    PROCESS_STARTED.pop(profile_id, None)
+    PROCESS_STARTED_MONOTONIC.pop(profile_id, None)
+    PROCESS_CONFIRMED.discard(profile_id)
     global PROCESS_SNAPSHOT_TIME
     PROCESS_SNAPSHOT_TIME = 0.0
+    remaining_pids = set(discover_profile_processes(profile)) if profile else set()
+    if remaining_pids:
+        raise RuntimeError(f"实例仍在运行，未能停止 PID：{sorted(remaining_pids)}")
 
 
 def recent_log(profile_id: str) -> str:
@@ -554,7 +585,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"log": recent_log(profile_id)})
             return
         if parsed.path == "/api/health":
-            self.send_json({"ok": True})
+            self.send_json({"ok": True, "service": "CodexMultiLauncher", "pid": os.getpid()})
             return
         if parsed.path == "/" or parsed.path == "/index.html":
             self.serve_file(ROOT / "index.html", "text/html; charset=utf-8")
@@ -667,11 +698,22 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    global DATA_ROOT, PROFILES_ROOT, PROFILES_FILE
     parser = argparse.ArgumentParser(description="Codex TokenAPI 多实例本地控制台")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--open", action="store_true", help="启动后打开浏览器")
+    parser.add_argument("--data-root", type=Path, help="指定配置存储目录")
+    parser.add_argument("--log-file", type=Path, help="后台服务日志文件")
     arguments = parser.parse_args()
+    if arguments.data_root:
+        DATA_ROOT = arguments.data_root.resolve()
+        PROFILES_ROOT = DATA_ROOT / "profiles"
+        PROFILES_FILE = DATA_ROOT / "profiles.json"
+    if arguments.log_file:
+        arguments.log_file.parent.mkdir(parents=True, exist_ok=True)
+        sys.stdout = arguments.log_file.open("a", encoding="utf-8", buffering=1)
+        sys.stderr = sys.stdout
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     PROFILES_ROOT.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer((arguments.host, arguments.port), Handler)

@@ -1,6 +1,9 @@
 const state = { profiles: [] };
 const collapsedIds = new Set();
 const knownProfileIds = new Set();
+let runtimeOperationCount = 0;
+let refreshPromise = null;
+const connectionErrorMessage = '本地控制台服务未连接，请重新运行 start.bat';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
@@ -14,19 +17,24 @@ function showToast(message, isError = false) {
 }
 
 async function request(path, options = {}) {
-  const response = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
+  let response;
+  try {
+    response = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
+  } catch {
+    throw new Error(connectionErrorMessage);
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
   return data;
 }
 
 function profileTemplate(profile) {
-  const statusLabel = profile.status === 'running' ? `运行中 · PID ${profile.pid}` : profile.status === 'failed' ? '启动失败' : '已停止';
+  const statusLabel = profile.status === 'running' ? `运行中 · PID ${profile.pid}` : profile.status === 'starting' ? '启动中…' : profile.status === 'failed' ? '启动失败' : '已停止';
   const tokenLabel = profile.tokenConfigured ? '已保存 Token（留空保持不变）' : '尚未配置 Token';
   const collapsed = collapsedIds.has(profile.id);
   return `<article class="card${collapsed ? ' collapsed' : ''}" data-id="${escapeHtml(profile.id)}">
     <div class="card-head">
-      <label class="switch" title="启动/关闭实例"><input class="enabled" type="checkbox" ${profile.status === 'running' ? 'checked' : ''}><span class="slider"></span></label>
+      <label class="switch" title="启动/关闭实例"><input class="enabled" type="checkbox" ${['running', 'starting'].includes(profile.status) ? 'checked' : ''}><span class="slider"></span></label>
       <div class="card-title"><div class="title-row"><strong>${escapeHtml(profile.name)}</strong>${profile.isDefault ? '<span class="default-badge">默认配置（现有配置）</span>' : ''}</div><div class="meta">${escapeHtml(profile.baseUrl)} · ${escapeHtml(profile.model)}</div></div>
       <span class="status ${profile.status}">${statusLabel}</span>
       <button class="button small set-default head-default" type="button" ${profile.isDefault ? 'disabled' : ''}>${profile.isDefault ? '当前默认' : '设为默认'}</button>
@@ -41,7 +49,7 @@ function profileTemplate(profile) {
       <div class="field"><label>推理强度</label><select class="reasoningEffort">${['low','medium','high','xhigh','max','ultra'].map(value => `<option ${value === profile.reasoningEffort ? 'selected' : ''}>${value}</option>`).join('')}</select></div>
       <div class="field"><label>协议</label><select class="wireApi"><option value="responses" ${profile.wireApi === 'responses' ? 'selected' : ''}>responses</option><option value="chat" ${profile.wireApi === 'chat' ? 'selected' : ''}>chat completions</option></select></div>
       <div class="field wide"><label>Codex ChatGPT.exe 路径（可选）</label><input class="executablePath" value="${escapeHtml(profile.executablePath)}" placeholder="留空则自动查找 Microsoft Store 安装"></div>
-      <div class="card-actions"><span class="hint">独立目录：${escapeHtml(profile.id)}</span><div class="action-right"><button class="button small save" type="button">保存</button><button class="button small danger delete" type="button">删除</button></div></div>
+      <div class="card-actions"><span class="hint">${profile.usesSourceConfig ? `启停使用原配置：${escapeHtml(profile.runtimeHome)}` : `独立目录：${escapeHtml(profile.id)}`}</span><div class="action-right"><button class="button small save" type="button">保存</button><button class="button small danger delete" type="button">删除</button></div></div>
     </div>
   </article>`;
 }
@@ -107,9 +115,11 @@ function setCardCollapsed(card, collapsed) {
 async function toggleRuntime(card) {
   const toggle = $('.enabled', card);
   const shouldRun = toggle.checked;
+  runtimeOperationCount += 1;
   toggle.disabled = true;
   try {
-    const profile = await saveCard(card);
+    // Stopping must still work when an edited form is incomplete or invalid.
+    const profile = shouldRun ? await saveCard(card) : { id: card.dataset.id };
     if (!profile) {
       toggle.checked = !shouldRun;
       return;
@@ -122,13 +132,13 @@ async function toggleRuntime(card) {
       await request(`/api/profiles/${id}/stop`, { method: 'POST', body: '{}' });
       showToast('实例停止请求已发送');
     }
-    await refresh();
   } catch (error) {
     toggle.checked = !shouldRun;
     showToast(error.message, true);
-    await refresh();
   } finally {
+    runtimeOperationCount -= 1;
     toggle.disabled = false;
+    await refresh();
   }
 }
 
@@ -157,7 +167,25 @@ function bindCard(card) {
 }
 
 async function refresh() {
-  try { const data = await request('/api/state'); state.profiles = data.profiles; $('#dataRoot').textContent = data.dataRoot; render(); } catch (error) { showToast(error.message, true); }
+  if (runtimeOperationCount) return;
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    try {
+      const data = await request('/api/state');
+      if (runtimeOperationCount) return;
+      state.profiles = data.profiles;
+      $('#dataRoot').textContent = data.dataRoot;
+      render();
+      if ($('#toast').textContent === connectionErrorMessage) $('#toast').textContent = '';
+    } catch (error) {
+      if (error.message === connectionErrorMessage) {
+        document.querySelectorAll('.card .enabled').forEach(toggle => { toggle.disabled = true; });
+        document.querySelectorAll('.card .status').forEach(status => { status.textContent = '连接已断开'; });
+      }
+      showToast(error.message, true);
+    }
+  })();
+  try { await refreshPromise; } finally { refreshPromise = null; }
 }
 
 async function addProfile() {

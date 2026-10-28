@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [string]$ProfileRoot,
     [switch]$InPackage,
@@ -7,17 +7,37 @@ param(
 
 $ErrorActionPreference = "Stop"
 $profilePath = Join-Path $ProfileRoot "profile.json"
-$configPath = Join-Path (Join-Path $ProfileRoot "codex-home") "config.toml"
-$profile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json
 $codexHome = Join-Path $ProfileRoot "codex-home"
 $roaming = Join-Path $codexHome "appdata\Roaming"
 $local = Join-Path $codexHome "appdata\Local"
 $logPath = Join-Path $ProfileRoot "launcher.log"
-
-New-Item -ItemType Directory -Force -Path $codexHome, $roaming, $local | Out-Null
+$stopPath = Join-Path $ProfileRoot "stop.requested"
 
 function Write-LauncherLog([string]$Message) {
     Add-Content -LiteralPath $logPath -Encoding UTF8 -Value ("{0} {1}" -f (Get-Date -Format o), $Message)
+}
+
+try {
+    New-Item -ItemType Directory -Force -Path $ProfileRoot | Out-Null
+    Write-LauncherLog ("BEGIN profileRoot={0}" -f $ProfileRoot)
+    $profile = Get-Content -LiteralPath $profilePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($profile.runtimeHome) { $codexHome = $profile.runtimeHome }
+    if ($profile.runtimeAppData) { $roaming = $profile.runtimeAppData }
+    if ($profile.runtimeLocalAppData) { $local = $profile.runtimeLocalAppData }
+    $configPath = Join-Path $codexHome "config.toml"
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+        throw "Codex config not found: $configPath"
+    }
+    New-Item -ItemType Directory -Force -Path $roaming, $local | Out-Null
+}
+catch {
+    try {
+        Write-LauncherLog ("ERROR {0}" -f $_.Exception.Message)
+    }
+    catch {
+        # Preserve the original error when the profile directory itself is unavailable.
+    }
+    exit 1
 }
 
 function Find-CodexExecutable {
@@ -53,10 +73,20 @@ function Start-CodexProcess([string]$Executable) {
         $env:LOCALAPPDATA = $local
         $env:TERM = "xterm-256color"
         $encodedPath = [Uri]::EscapeDataString($profile.workspace)
+        if (Test-Path -LiteralPath $stopPath) {
+            Write-LauncherLog "CANCELLED before client launch"
+            return
+        }
+        Write-LauncherLog ("LAUNCH executable={0} workspace={1}" -f $Executable, $profile.workspace)
         $started = Start-Process -FilePath $Executable `
             -ArgumentList @("--new-window", "codex://new?path=$encodedPath") `
             -WorkingDirectory $profile.workspace `
             -PassThru
+        if (Test-Path -LiteralPath $stopPath) {
+            Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue
+            Write-LauncherLog "CANCELLED after client launch"
+            return
+        }
         Write-LauncherLog ("START pid={0} name={1} workspace={2}" -f $started.Id, $profile.name, $profile.workspace)
         $started.WaitForExit()
         Write-LauncherLog ("EXIT pid={0} code={1}" -f $started.Id, $started.ExitCode)
@@ -83,12 +113,19 @@ try {
 
     $windowsPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
     $innerArguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -InPackage -GuiPath "{1}" -ProfileRoot "{2}"' -f $PSCommandPath, $selectedGui, $ProfileRoot
-    Invoke-CommandInDesktopPackage `
+    Write-LauncherLog ("INVOKE package={0} app={1}" -f "OpenAI.Codex_2p2nqsd0c76g0", "App")
+    $invokeResult = Invoke-CommandInDesktopPackage `
         -PackageFamilyName "OpenAI.Codex_2p2nqsd0c76g0" `
         -AppId "App" `
         -Command $windowsPowerShell `
         -Args $innerArguments `
         -PreventBreakaway
+    if ($null -eq $invokeResult) {
+        Write-LauncherLog "INVOKE completed with no output"
+    }
+    else {
+        Write-LauncherLog ("INVOKE result={0}" -f (($invokeResult | Out-String).Trim()))
+    }
 }
 catch {
     Write-LauncherLog ("ERROR {0}" -f $_.Exception.Message)

@@ -1,2 +1,2 @@
 @echo off
-py -3 "%~dp0server.py" --open %*
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0start.ps1" %*
